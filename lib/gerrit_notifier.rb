@@ -39,8 +39,6 @@ class GerritNotifier
     # post every X seconds rather than truly in real-time to group messages
     # to conserve slack-log
     Thread.new do
-      slack_config = YAML.load(File.read('config/slack.yml'))['slack']
-
       while true
         @@semaphore.synchronize do
           if @@buffer == {}
@@ -53,6 +51,8 @@ class GerritNotifier
           if @@buffer.size > 0 #&& !ENV['DEVELOPMENT']
             @@buffer.each do |channel, messages|
               message = messages.join("\n\n")
+
+              next if ignore? message
 
               Slack.configure do |config|
                 config.token = slack_config['token']
@@ -135,6 +135,21 @@ class GerritNotifier
     # Merged
     if update.merged?
       notify channels, "#{update.commit} was merged! \\o/", ":yuss: :dancing_cool:"
+    end
+  end
+
+  def self.slack_config
+    @slack_config ||= YAML.load(File.read('config/slack.yml'))['slack']
+  end
+
+  def self.ignore?(message)
+    ignore_words = slack_config['ignore_words']
+    if ignore_words.nil? || ignore_words.empty?
+      false
+    else
+      ignore_words.reduce(false) { |boolean, word|
+        boolean || message.include?(word)
+      }
     end
   end
 end

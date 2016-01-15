@@ -50,7 +50,7 @@ class GerritNotifier
             ap @@buffer
           end
 
-          if @@buffer.size > 0 && !ENV['DEVELOPMENT']
+          if @@buffer.size > 0 #&& !ENV['DEVELOPMENT']
             @@buffer.each do |channel, messages|
               message = messages.join("\n\n")
 

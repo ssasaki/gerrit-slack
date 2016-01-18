@@ -16,6 +16,10 @@ class Update
     json['change']['project'] if json['change']
   end
 
+  def patchset_created?
+    type == 'patchset-created'
+  end
+
   def comment_added?
     type == 'comment-added'
   end
@@ -51,7 +55,11 @@ class Update
       break if line =~ /Reviewer (DID NOT )?check/
       frd_lines << line
     }
-    frd_lines.join("\n\n")
+    frd_lines.join("")
+  end
+
+  def patchset
+    "Patch Set #{json['patchSet']['number']}"
   end
 
   def commit

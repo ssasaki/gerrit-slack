@@ -50,14 +50,16 @@ class GerritNotifier
 
           if @@buffer.size > 0 #&& !ENV['DEVELOPMENT']
             @@buffer.each do |channel, messages|
-              message = messages.join("\n\n")
+              messages.each do |message|
 
-              next if ignore? message
+                next if ignore? message
 
-              Slack.configure do |config|
-                config.token = slack_config['token']
+                Slack.configure do |config|
+                  config.token = slack_config['token']
+                end
+                Slack.chat_postMessage text:message, username:slack_config['username'], icon_emoji:slack_config['icon_emoji'], channel: channel
+                sleep 1
               end
-              Slack.chat_postMessage text:message, username:slack_config['username'], icon_emoji:slack_config['icon_emoji'], channel: channel
             end
           end
 

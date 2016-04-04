@@ -1,9 +1,12 @@
+require 'slack'
 class GerritNotifier
   extend Alias
 
   @@buffer = {}
   @@channel_config = nil
   @@semaphore = Mutex.new
+
+  BR = "\r\n>"
 
   def self.start!
     @@channel_config = ChannelConfig.new
@@ -38,8 +41,6 @@ class GerritNotifier
     # post every X seconds rather than truly in real-time to group messages
     # to conserve slack-log
     Thread.new do
-      slack_config = YAML.load(File.read('config/slack.yml'))['slack']
-
       while true
         @@semaphore.synchronize do
           if @@buffer == {}
@@ -49,15 +50,18 @@ class GerritNotifier
             ap @@buffer
           end
 
-          if @@buffer.size > 0 && !ENV['DEVELOPMENT']
+          if @@buffer.size > 0 #&& !ENV['DEVELOPMENT']
             @@buffer.each do |channel, messages|
-              notifier = Slack::Notifier.new slack_config['team'], slack_config['token']
-              notifier.ping(messages.join("\n\n"),
-                channel: channel,
-                username: 'gerrit',
-                icon_emoji: ':dragon_face:',
-                link_names: 1
-              )
+              messages.each do |message|
+
+                next if ignore? message
+
+                Slack.configure do |config|
+                  config.token = slack_config['token']
+                end
+                Slack.chat_postMessage text:message, username:slack_config['username'], icon_emoji:slack_config['icon_emoji'], channel: channel
+                sleep 1
+              end
             end
           end
 
@@ -93,48 +97,48 @@ class GerritNotifier
 
     return if channels.size == 0
 
-    # Jenkins update
-    if update.jenkins?
-      if update.build_successful? && !update.wip?
-        notify channels, "#{update.commit} *passed* Jenkins and is ready for *code review*"
-      elsif update.build_failed? && !update.build_aborted?
-        notify_user update.owner, "#{update.commit_without_owner} *failed* on Jenkins"
-      end
-    end
-
+    # Patch Set Created
+    if update.patchset_created?
+      notify channels, "#{slack_config['icon_patchset']} patchset created. #{BR}#{update.commit} #{BR}#{update.patchset}"      
     # Code review +2
-    if update.code_review_approved?
-      notify channels, "#{update.author_slack_name} has *+2'd* #{update.commit}: ready for *QA*"
-    end
-
+    elsif update.code_review_approved?
+      notify channels, "#{slack_config['icon_plus']} #{update.author_slack_name} has +2 #{BR}#{update.commit} #{BR}#{update.patchset}"
     # Code review +1
-    if update.code_review_tentatively_approved?
-      notify channels, "#{update.author_slack_name} has *+1'd* #{update.commit}: needs another set of eyes for *code review*"
-    end
-
-    # QA/Product
-    if update.qa_approved? && update.product_approved?
-      notify channels, "#{update.author_slack_name} has *QA/Product-approved* #{update.commit}!", ":mj: :victory:"
-    elsif update.qa_approved?
-      notify channels, "#{update.author_slack_name} has *QA-approved* #{update.commit}!", ":mj:"
-    elsif update.product_approved?
-      notify channels, "#{update.author_slack_name} has *Product-approved* #{update.commit}!", ":victory:"
-    end
-
+    elsif update.code_review_tentatively_approved?
+      notify channels, "#{slack_config['icon_plus']} #{update.author_slack_name} has +1 #{BR}#{update.commit} #{BR}#{update.patchset}"
     # Any minuses (Code/Product/QA)
-    if update.minus_1ed? || update.minus_2ed?
-      verb = update.minus_1ed? ? "-1'd" : "-2'd"
-      notify channels, "#{update.author_slack_name} has *#{verb}* #{update.commit}"
+    elsif update.minus_1ed? || update.minus_2ed?
+      verb = update.minus_1ed? ? "-1" : "-2"
+      notify channels, "#{slack_config['icon_minus']} #{update.author_slack_name} has #{verb} #{BR}#{update.commit} #{BR}#{update.patchset}"
+    # No Score
+    elsif update.comment_added? && update.human? && update.approvals.nil? && update.comment == ''
+      notify channels, "#{slack_config['icon_noscore']} #{update.author_slack_name} has no score #{BR}#{update.commit} #{BR}#{update.patchset}"
     end
 
     # New comment added
     if update.comment_added? && update.human? && update.comment != ''
-      notify channels, "#{update.author_slack_name} has left comments on #{update.commit}: \"#{update.comment}\""
+      comment = update.comment.gsub(/(\r\n|\r|\n)/, BR)
+      notify channels, "#{slack_config['icon_comment']} #{update.author_slack_name} has left comments on #{BR}#{update.commit} #{BR}#{update.patchset} #{BR}#{comment}"
     end
 
     # Merged
     if update.merged?
-      notify channels, "#{update.commit} was merged! \\o/", ":yuss: :dancing_cool:"
+      notify channels, "#{update.commit} was merged! #{slack_config['icon_merge']}"
+    end
+  end
+
+  def self.slack_config
+    @slack_config ||= YAML.load(File.read('config/slack.yml'))['slack']
+  end
+
+  def self.ignore?(message)
+    ignore_words = slack_config['ignore_words']
+    if ignore_words.nil? || ignore_words.empty?
+      false
+    else
+      ignore_words.reduce(false) { |boolean, word|
+        boolean || message.include?(word)
+      }
     end
   end
 end
